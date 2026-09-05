@@ -1,0 +1,140 @@
+name: CI
+
+# Required status checks for branch protection on main (see
+# docs/mico-implementation-design.md, "Delivery Process: Commits, PRs, and
+# the CI Gate"): lint, typecheck, test, layer-check, build, review-gate.
+# A PR may not merge while any of these is red.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -e ".[dev]"
+      - run: mypy mico
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -e ".[dev]"
+      # Diff-coverage enforcement (fail on a coverage regression for touched
+      # files specifically, per the Delivery Process table) is deferred to a
+      # later task once there's a coverage baseline to diff against; for now
+      # this reports coverage without gating on it.
+      - run: pytest -q --cov=mico --cov-report=term-missing
+
+  layer-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python tools/check_layers.py
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install build
+      - run: python -m build
+
+  # Automated code-review gate (Delivery Process: "Automated code-review
+  # gate"). Requires an ANTHROPIC_API_KEY repo secret. Note: on a PR opened
+  # from a fork, the default GITHUB_TOKEN is read-only, so the PR-comment
+  # step below will silently fail to post -- the job's pass/fail status
+  # still gates the merge either way.
+  review-gate:
+    if: github.event_name == 'pull_request'
+    needs: [lint, typecheck, test, layer-check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run automated PR review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::error::ANTHROPIC_API_KEY repo secret is not configured, so the review-gate check cannot run. See 'One-time setup' in docs/mico-implementation-design.md (Delivery Process section)."
+            echo "REVIEW_VERDICT: FAIL (blocked: ANTHROPIC_API_KEY repo secret is not configured)" > /tmp/review-result.txt
+            exit 1
+          fi
+          git fetch origin "${BASE_REF}" --depth=1
+          git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
+          {
+            echo "You are reviewing pull request #${PR_NUMBER} for the mico project."
+            echo "Design reference: docs/mico-implementation-design.md"
+            echo
+            cat .github/review-checklist.md
+            echo
+            echo "--- PR title ---"
+            printf '%s\n' "$PR_TITLE"
+            echo
+            echo "--- PR description ---"
+            printf '%s\n' "$PR_BODY"
+            echo
+            echo "--- Diff ---"
+            cat /tmp/pr.diff
+          } > /tmp/review-prompt.md
+          claude -p < /tmp/review-prompt.md > /tmp/review-result.txt
+          cat /tmp/review-result.txt
+      - name: Post review as PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "${PR_NUMBER}" --body-file /tmp/review-result.txt || true
+      - name: Enforce review verdict
+        run: |
+          if ! grep -q "^REVIEW_VERDICT: PASS$" /tmp/review-result.txt; then
+            echo "::error::Automated review did not pass (missing/failing REVIEW_VERDICT) -- see the PR comment or the job log above."
+            exit 1
+          fi
