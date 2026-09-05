@@ -74,10 +74,16 @@ jobs:
       - run: python -m build
 
   # Automated code-review gate (Delivery Process: "Automated code-review
-  # gate"). Requires an ANTHROPIC_API_KEY repo secret. Note: on a PR opened
-  # from a fork, the default GITHUB_TOKEN is read-only, so the PR-comment
-  # step below will silently fail to post -- the job's pass/fail status
-  # still gates the merge either way.
+  # gate"). Authenticates via Anthropic Workload Identity Federation (WIF) --
+  # the GitHub Actions OIDC token is exchanged for a short-lived Anthropic
+  # access token, so there is no static ANTHROPIC_API_KEY to store, rotate,
+  # or leak. The federation rule/org/service-account/workspace IDs are read
+  # from repo variables (Settings -> Secrets and variables -> Actions ->
+  # Variables): ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+  # ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID. These are
+  # identifiers, not secrets (Anthropic's WIF docs are explicit they're
+  # safe to commit) -- kept as variables rather than literals here so
+  # rotating the rule never requires a workflow-file change.
   review-gate:
     if: github.event_name == 'pull_request'
     needs: [lint, typecheck, test, layer-check, build]
@@ -85,56 +91,41 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
+      id-token: write # required to fetch the GitHub OIDC token for WIF
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - name: Automated PR review (Claude Code, via Workload Identity Federation)
+        id: review
+        uses: anthropics/claude-code-action@v1
         with:
-          node-version: "20"
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
-      - name: Run automated PR review
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          if [ -z "${ANTHROPIC_API_KEY}" ]; then
-            echo "::error::ANTHROPIC_API_KEY repo secret is not configured, so the review-gate check cannot run. See 'One-time setup' in docs/mico-implementation-design.md (Delivery Process section)."
-            echo "REVIEW_VERDICT: FAIL (blocked: ANTHROPIC_API_KEY repo secret is not configured)" > /tmp/review-result.txt
-            exit 1
-          fi
-          git fetch origin "${BASE_REF}" --depth=1
-          git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
-          {
-            echo "You are reviewing pull request #${PR_NUMBER} for the mico project."
-            echo "Design reference: docs/mico-implementation-design.md"
-            echo
-            cat .github/review-checklist.md
-            echo
-            echo "--- PR title ---"
-            printf '%s\n' "$PR_TITLE"
-            echo
-            echo "--- PR description ---"
-            printf '%s\n' "$PR_BODY"
-            echo
-            echo "--- Diff ---"
-            cat /tmp/pr.diff
-          } > /tmp/review-prompt.md
-          claude -p < /tmp/review-prompt.md > /tmp/review-result.txt
-          cat /tmp/review-result.txt
-      - name: Post review as PR comment
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh pr comment "${PR_NUMBER}" --body-file /tmp/review-result.txt || true
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            The PR branch is already checked out in the current working directory.
+            Read .github/review-checklist.md in full and follow it exactly, using
+            docs/mico-implementation-design.md and the PRD/AD docs it references
+            for context on what the PR's linked task ID is supposed to implement.
+
+            Post your findings as a top-level PR comment via `gh pr comment`
+            (don't submit review text as a chat message). Then, and only then,
+            return the structured JSON result requested by the schema -- verdict
+            is "FAIL" if and only if the checklist surfaced a high/critical finding.
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["PASS","FAIL"]},"blocking_issues":{"type":"array","items":{"type":"string"}}},"required":["verdict"]}'
       - name: Enforce review verdict
         run: |
-          if ! grep -q "^REVIEW_VERDICT: PASS$" /tmp/review-result.txt; then
-            echo "::error::Automated review did not pass (missing/failing REVIEW_VERDICT) -- see the PR comment or the job log above."
+          VERDICT=$(echo '${{ steps.review.outputs.structured_output }}' | jq -r '.verdict // "FAIL"')
+          echo "Review verdict: ${VERDICT}"
+          if [ "${VERDICT}" != "PASS" ]; then
+            echo "::error::Automated review verdict was ${VERDICT} -- see the PR comment for findings."
             exit 1
           fi
