@@ -119,7 +119,7 @@ jobs:
             return the structured JSON result requested by the schema -- verdict
             is "FAIL" if and only if the checklist surfaced a high/critical finding.
           claude_args: |
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["PASS","FAIL"]},"blocking_issues":{"type":"array","items":{"type":"string"}}},"required":["verdict"]}'
       - name: Enforce review verdict
         run: |
