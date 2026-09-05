@@ -121,6 +121,7 @@ jobs:
           claude_args: |
             --allowedTools "Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["PASS","FAIL"]},"blocking_issues":{"type":"array","items":{"type":"string"}}},"required":["verdict"]}'
+          show_full_output: true
       - name: Enforce review verdict
         run: |
           VERDICT=$(echo '${{ steps.review.outputs.structured_output }}' | jq -r '.verdict // "FAIL"')
