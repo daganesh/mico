@@ -102,6 +102,11 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_REF: ${{ github.base_ref }}
         run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::error::ANTHROPIC_API_KEY repo secret is not configured, so the review-gate check cannot run. See 'One-time setup' in docs/mico-implementation-design.md (Delivery Process section)."
+            echo "REVIEW_VERDICT: FAIL (blocked: ANTHROPIC_API_KEY repo secret is not configured)" > /tmp/review-result.txt
+            exit 1
+          fi
           git fetch origin "${BASE_REF}" --depth=1
           git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
           {
