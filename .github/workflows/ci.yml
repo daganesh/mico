@@ -105,13 +105,6 @@ jobs:
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-          # TEMPORARY diagnostic flag: review-gate is failing near-instantly
-          # with no cost and no structured_output even with Read/Glob/Grep
-          # available, and the actual model interaction is hidden by
-          # default. Remove this once the root cause is found -- the repo
-          # is public, so this exposes the full Claude Code transcript in
-          # the (already-public) Actions log.
-          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
