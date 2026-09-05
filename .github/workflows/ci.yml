@@ -2,7 +2,8 @@ name: CI
 
 # Required status checks for branch protection on main (see
 # docs/mico-implementation-design.md, "Delivery Process: Commits, PRs, and
-# the CI Gate"): lint, typecheck, test, layer-check, build, review-gate.
+# the CI Gate"): lint, typecheck, test, layer-check, build, frontend-lint,
+# frontend-typecheck, frontend-build, review-gate.
 # A PR may not merge while any of these is red.
 
 on:
@@ -73,6 +74,51 @@ jobs:
       - run: pip install build
       - run: python -m build
 
+  frontend-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
   # Automated code-review gate (Delivery Process: "Automated code-review
   # gate"). Authenticates via Anthropic Workload Identity Federation (WIF) --
   # the GitHub Actions OIDC token is exchanged for a short-lived Anthropic
@@ -86,7 +132,17 @@ jobs:
   # rotating the rule never requires a workflow-file change.
   review-gate:
     if: github.event_name == 'pull_request'
-    needs: [lint, typecheck, test, layer-check, build]
+    needs:
+      [
+        lint,
+        typecheck,
+        test,
+        layer-check,
+        build,
+        frontend-lint,
+        frontend-typecheck,
+        frontend-build,
+      ]
     runs-on: ubuntu-latest
     permissions:
       contents: read
