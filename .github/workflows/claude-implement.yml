@@ -52,20 +52,27 @@ jobs:
             REPO: ${{ github.repository }}
             ISSUE NUMBER: ${{ github.event.issue.number }}
             ISSUE TITLE: ${{ github.event.issue.title }}
+            ISSUE LABELS: ${{ join(github.event.issue.labels.*.name, ', ') }}
 
             ISSUE BODY:
             ${{ github.event.issue.body }}
 
             The repository is already checked out in the current working
-            directory, with dependencies installed. Use
-            docs/mico-implementation-design.md and the PRD/AD docs it
-            references for context on the codebase's layering
-            (mico/brain, mico/logic, mico/ui) and ABC boundaries.
+            directory, with dependencies installed.
+
+            Read .github/implement-guidelines.md in full and follow it
+            exactly -- it tells you which rules apply to every change, and
+            which section applies specifically to a bug fix vs. a new
+            feature (use the issue's labels above plus its description to
+            decide which one this is). Use docs/mico-implementation-design.md
+            and the PRD/AD docs it references for context on the
+            codebase's layering (mico/brain, mico/logic, mico/ui) and ABC
+            boundaries.
 
             Instructions:
             1. Locate the relevant files in the repository.
-            2. Implement the requested feature or bug fix, respecting the
-               existing layer/ABC boundaries.
+            2. Implement the requested feature or bug fix, following
+               .github/implement-guidelines.md.
             3. Write automated tests under tests/ covering your changes.
             4. Run `ruff check .`, `mypy mico`, and
                `pytest -q --cov=mico --cov-report=term-missing` yourself
