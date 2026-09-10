@@ -224,7 +224,7 @@ A finding at high/critical severity fails the check; the PR author (or the next 
 ### One-time setup (do once, as part of or right after M1.1)
 
 - Enable branch protection on `main` in the GitHub repo settings: require the five CI jobs above + the review-gate check, require PRs (no direct pushes), require branches up to date.
-- Confirm whether this environment's Claude Approvals / PR-review integration is already installed on the repo, or whether the review-gate job needs to be written as a plain GitHub Actions step invoking `claude -p` with the checklist above.
+- `review-gate` authenticates via **Anthropic Workload Identity Federation (WIF)**, not a static `ANTHROPIC_API_KEY` secret: the job exchanges its GitHub Actions OIDC token for a short-lived Anthropic access token using `anthropics/claude-code-action@v1` (`id-token: write` permission, plus a federation rule/service account already configured in the Anthropic Console). No repo secret is required or stored for this job — instead, set four repo **variables** (Settings → Secrets and variables → Actions → Variables tab, not Secrets, since these are identifiers rather than credentials): `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`.
 
 ---
 
